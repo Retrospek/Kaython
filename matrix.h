@@ -1,0 +1,287 @@
+#include <vector>
+#include <random>
+#include <thread>
+#include <stdexcept>
+#include <cstddef>
+#include <iostream>
+
+template <typename T>
+class matrix
+{
+private:
+    std::vector<T> _data;
+    size_t _row_num;
+    size_t _col_num;
+
+    inline static std::mt19937 rng{42}; // standard seed=42, we use {} instead of () because it lets the parser know we are doing initiailization and not a function call
+    inline static std::uniform_real_distribution<T> dist{0.0, 10.0};
+    void random_vec(std::vector<T> &curr, size_t row_num, size_t col_num)
+    {
+        curr.resize(row_num * col_num); // We know the exact amount of elements, so let's premt resize
+        for (auto &val : curr)          // we can access the aliases instead of
+        {
+            val = dist(rng);
+        }
+
+        // By the end the vector should have ranodm values in the range 0-10 inclusive
+    }
+
+public:
+    /*
+    6 things:
+    - Destructor
+    - Default Constructor
+    - Copy Constructor
+    - Copy Assignement
+    - Move Constructor
+    - Move Assignment
+    */
+    ~matrix() = default;
+    matrix()
+        : _data(), _row_num(0), _col_num(0)
+    {
+        /*
+        By default a 0x0 matrix is created
+        */
+    }
+
+    matrix(size_t row_num, size_t col_num, bool random)
+        : _row_num(row_num), _col_num(col_num)
+    {
+        if (row_num > 0 && col_num > 0)
+        {
+            _data.resize(row_num * col_num);
+            if (random)
+                random_vec(_data, row_num, col_num);
+        }
+    }
+
+    matrix(const matrix &other)
+        : _data(other._data), _row_num(other._row_num), _col_num(other._col_num)
+    {
+    }
+
+    matrix &operator=(const matrix &other)
+    {
+        if (this == &other) // if we're referencing the SAME object why the heck would we make a new object
+        {
+            return *this;
+        }
+
+        _data = other._data;
+        _row_num = other._row_num;
+        _col_num = other._col_num;
+
+        return *this;
+    }
+
+    matrix(matrix &&other) noexcept // this will never through an exception because the rvalue is valid ALWAYS
+        : _data(std::move(other._data)), _row_num(other._row_num), _col_num(other._col_num)
+    {
+        other._row_num = 0;
+        other._col_num = 0;
+    }
+
+    matrix &operator=(matrix &&other) noexcept
+    {
+        if (this == &other)
+        {
+            return *this;
+        }
+
+        _data = std::move(other._data);
+        _row_num = other._row_num;
+        _col_num = other._col_num;
+
+        other._row_num = 0;
+        other._col_num = 0;
+
+        return *this;
+    }
+
+    std::vector<T> &get_data()
+    {
+        return _data;
+    }
+
+    const std::vector<T> &get_data() const // lowkey only useful when you are extracting a matrix's data to a third part thing
+    {
+        return _data;
+    }
+
+    size_t get_row_num() const
+    {
+        return _row_num;
+    }
+
+    size_t get_col_num() const
+    {
+        return _col_num;
+    }
+
+    void push_row(const std::vector<T> &insert_row)
+    {
+        if (_col_num == 0) // So if we're dealing with an empty matrix just alter the col amount since rows change as you keep pushing but col -< constant
+        {
+            _col_num = insert_row.size();
+        }
+        else if (insert_row.size() != _col_num)
+        {
+            throw std::invalid_argument("Row size does not match matrix columns");
+        }
+        _data.insert(_data.end(), insert_row.begin(), insert_row.end()); // let's use the iterator that std::vector has implemented via begin and end
+        ++_row_num;                                                      // Increase row count
+    }
+
+    void clear_data()
+    {
+        _data.clear();
+    }
+
+    T &at(size_t row, size_t col) { return _data[row * _col_num + col]; }
+    const T &at(size_t row, size_t col) const { return _data[row * _col_num + col]; }
+
+    matrix matmul(const matrix &other) // left is = OTHER -> l_c = r_r
+    {
+        if (other._col_num != this->_row_num)
+        {
+            throw std::invalid_argument("Calling Other x Curr => Other Column Num != This Row Num");
+        }
+
+        matrix new_mat(other._row_num, _col_num, false);
+        new_mat.clear_data();
+
+        for (size_t r = 0; r < other._row_num; ++r) // LEFT MATRIX IS = OTHER
+        {
+            for (size_t c = 0; c < _col_num; ++c) // RIGHT MATRIX IS = THIS
+            {
+                T cell_dot = 0;
+                for (size_t k = 0; k < other._col_num; ++k)
+                { // sum over shared dimension
+                    cell_dot += other.at(r, k) * this->at(k, c);
+                }
+                new_mat._data.push_back(cell_dot);
+            }
+        }
+
+        return new_mat;
+    }
+    matrix matmul_multithreaded(const matrix &other) const // left is = OTHER -> l_c = r_r
+    {
+        if (other._col_num != this->_row_num)
+        {
+            throw std::invalid_argument("Calling Other x Curr => Other Column Num != This Row Num");
+        }
+
+        matrix new_mat(other._row_num, _col_num, false);
+
+        auto tile = [&](size_t r_t, size_t r_b)
+        {
+            for (size_t r = r_t; r < r_b; ++r) // LEFT MATRIX IS = OTHER
+            {
+                for (size_t c = 0; c < new_mat._col_num; ++c) // RIGHT MATRIX IS = THIS
+                {
+                    T cell_dot = 0;
+                    for (size_t k = 0; k < other._col_num; ++k)
+                    { // sum over shared dimension
+                        cell_dot += other.at(r, k) * this->at(k, c);
+                    }
+                    new_mat._data[r * new_mat._col_num + c] = cell_dot;
+                }
+            }
+        };
+
+        size_t num_threads = std::thread::hardware_concurrency();
+        if (num_threads == 0)
+            num_threads = 4;
+
+        size_t rows_per_thread = other._row_num / num_threads;
+        size_t r_start = 0;
+        std::vector<std::jthread> threads;
+        threads.reserve(num_threads);
+
+        for (size_t i = 0; i < num_threads; ++i)
+        {
+            size_t r_end = (i == num_threads - 1) ? other._row_num : r_start + rows_per_thread;
+            threads.emplace_back(tile, r_start, r_end);
+            r_start = r_end;
+        }
+
+        return new_mat;
+    }
+
+    matrix<T> mean(size_t &axis) const
+    {
+        if (axis == 1) // row wise
+        {
+        }
+        else if (axis == 0) // col wise
+        {
+        }
+        else
+        {
+            raise std::invalid_argument("Axis can either be 1(row) or 0(col) in the form of an integer");
+        }
+    }
+
+    matrix operator-=(const matrix &other)
+    {
+    }
+
+    matrix operator-(const matrix &other) const
+    {
+    }
+
+    matrix operator+=(const matrix &other)
+    {
+    }
+
+    matrix operator+(const matrix &other) const
+    {
+    }
+
+    matrix operator*=(const matrix &other)
+    {
+    }
+
+    matrix operator*(const matrix &other) const
+    {
+    }
+
+    matrix operator-=(const T &value)
+    {
+    }
+
+    matrix operator-(const T &value) const
+    {
+    }
+
+    matrix operator+=(const T &value)
+    {
+    }
+
+    matrix operator+(const T &value) const
+    {
+    }
+
+    matrix operator*=(const T &value)
+    {
+    }
+
+    matrix operator*(const T &value) const
+    {
+    }
+
+    void print() const
+    {
+        for (size_t r = 0; r < _row_num; ++r)
+        {
+            for (size_t c = 0; c < _col_num; ++c)
+            {
+                std::cout << at(r, c) << " ";
+            }
+            std::cout << "\n";
+        }
+        std::cout << "--------\n";
+    }
+};
