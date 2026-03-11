@@ -40,7 +40,7 @@ public:
             const TY predictions = this->predict(X);
             const TY loss = this->MSE_Loss(predictions, y);
             losses[i] = loss;
-
+            std::cout << "Iteration: " << i << ", Loss: " << loss << "\n";
             weight_grad = this->MSE_Weight_Grad(predictions, y);
             bias_grad = this->MSE_Bias_Grad(predictions, y);
         }
