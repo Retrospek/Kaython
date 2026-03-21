@@ -167,6 +167,7 @@ public:
 
     matrix T() const // transpose copy
     {
+
         matrix<DT> new_mat(this->_col_num, this->_row_num, false);
         _parallel_operator_overload([&](size_t r_start, size_t r_end)
                                     {
@@ -187,6 +188,52 @@ public:
                 new_mat.at(c, r) = this->at(r, c); }, this->_row_num);
 
         *this = std::move(new_mat);
+    }
+
+    matrix inverse() const // Returns new matrix, leaves original unchanged
+    {
+        // Create augmented matrix [A | I]
+        // Do Gaussian elimination
+        // Extract and return the inverse
+
+        if (_row_num != _col_num)
+        {
+            throw std::invalid_argument("yo send in a square matrix for an inversion operation R nxn not R nxm, where n != m");
+        }
+
+        DT determinant;
+        matrix<DT> new_mat(_row_num, _col_num, false);
+        if (_row_num == 1)
+        {
+            new_mat.at(0, 0) = 1.0 / this->at(0, 0);
+        }
+        else if (_row_num == 2)
+        {
+            // handle 2x2
+            determinant = this->at(0, 0) * this->at(1, 1) - this->at(0, 1) * this->at(1, 0);
+            new_mat.at(0, 0) = this->at(1, 1);
+            new_mat.at(0, 1) = -this->at(0, 1);
+            new_mat.at(1, 0) = -this->at(1, 0);
+            new_mat.at(1, 1) = this->at(0, 0);
+            new_mat *= (1.0 / determinant);
+            return new_mat;
+        }
+        else if (_row_num == 3)
+        {
+            // handle 3x3
+        }
+        else
+        {
+            // general Gaussian elimination
+        }
+    }
+
+    void inverse() // Modifies this matrix in-place
+    {
+        // Create augmented matrix [A | I]
+        // Do Gaussian elimination
+        // Extract the inverse
+        // *this = std::move(result);
     }
 
     matrix matmul(const matrix &other) // left is = OTHER -> l_c = r_r
