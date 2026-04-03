@@ -1,3 +1,5 @@
+#pragma once
+
 #include <vector>
 #include <random>
 #include <thread>
@@ -178,7 +180,7 @@ public:
         return new_mat;
     }
 
-    void T() // transpose reference
+    void T()
     {
         matrix<DT> new_mat(this->_col_num, this->_row_num, false);
         _parallel_operator_overload([&](size_t r_start, size_t r_end)
@@ -190,50 +192,67 @@ public:
         *this = std::move(new_mat);
     }
 
-    matrix inverse() const // Returns new matrix, leaves original unchanged
+    matrix inverse() const
     {
-        // Create augmented matrix [A | I]
-        // Do Gaussian elimination
-        // Extract and return the inverse
-
         if (_row_num != _col_num)
+            throw std::invalid_argument("Matrix must be square for inversion");
+
+        size_t n = _row_num;
+
+        matrix<DT> aug(n, 2 * n, false);
+        for (size_t r = 0; r < n; ++r)
+            for (size_t c = 0; c < n; ++c)
+            {
+                aug.at(r, c) = this->at(r, c);
+                aug.at(r, c + n) = (r == c) ? DT(1) : DT(0);
+            }
+
+        for (size_t col = 0; col < n; ++col)
         {
-            throw std::invalid_argument("yo send in a square matrix for an inversion operation R nxn not R nxm, where n != m");
+            size_t pivot_row = col;
+            DT max_val = std::abs(aug.at(col, col));
+            for (size_t r = col + 1; r < n; ++r)
+            {
+                DT val = std::abs(aug.at(r, col));
+                if (val > max_val)
+                {
+                    max_val = val;
+                    pivot_row = r;
+                }
+            }
+
+            if (max_val < DT(1e-12))
+                throw std::runtime_error("Matrix is singular or nearly singular");
+
+            if (pivot_row != col)
+                for (size_t c = 0; c < 2 * n; ++c)
+                    std::swap(aug.at(col, c), aug.at(pivot_row, c));
+
+            DT pivot = aug.at(col, col);
+            for (size_t c = 0; c < 2 * n; ++c)
+                aug.at(col, c) /= pivot;
+
+            for (size_t r = 0; r < n; ++r)
+            {
+                if (r == col)
+                    continue;
+                DT factor = aug.at(r, col);
+                for (size_t c = 0; c < 2 * n; ++c)
+                    aug.at(r, c) -= factor * aug.at(col, c);
+            }
         }
 
-        DT determinant;
-        matrix<DT> new_mat(_row_num, _col_num, false);
-        if (_row_num == 1)
-        {
-            new_mat.at(0, 0) = 1.0 / this->at(0, 0);
-        }
-        else if (_row_num == 2)
-        {
-            // handle 2x2
-            determinant = this->at(0, 0) * this->at(1, 1) - this->at(0, 1) * this->at(1, 0);
-            new_mat.at(0, 0) = this->at(1, 1);
-            new_mat.at(0, 1) = -this->at(0, 1);
-            new_mat.at(1, 0) = -this->at(1, 0);
-            new_mat.at(1, 1) = this->at(0, 0);
-            new_mat *= (1.0 / determinant);
-            return new_mat;
-        }
-        else if (_row_num == 3)
-        {
-            // handle 3x3
-        }
-        else
-        {
-            // general Gaussian elimination
-        }
+        matrix<DT> result(n, n, false);
+        for (size_t r = 0; r < n; ++r)
+            for (size_t c = 0; c < n; ++c)
+                result.at(r, c) = aug.at(r, c + n);
+
+        return result;
     }
 
-    void inverse() // Modifies this matrix in-place
+    void inverse()
     {
-        // Create augmented matrix [A | I]
-        // Do Gaussian elimination
-        // Extract the inverse
-        // *this = std::move(result);
+        *this = std::move(static_cast<const matrix *>(this)->inverse());
     }
 
     matrix matmul(const matrix &other) // left is = OTHER -> l_c = r_r
