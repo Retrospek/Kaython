@@ -1,246 +1,198 @@
 #include <iostream>
 #include <chrono>
+#include <cmath>
 #include <string>
+#include <random>
+#include <iomanip>
+#include <sstream>
+#include <vector>
 #include "matrix.h"
+#include "kalman.h"
 
-// ─── helpers ────────────────────────────────────────────────────────────────
+// ─── Ball ───────────────────────────────────────────────────────────────────
 
-struct Result
+struct Ball
 {
-    std::string name;
-    long long ns;
+    double x, y;
+    double vx, vy;
+    double ax, ay;
+
+    Ball(double x0, double y0, double vx0, double vy0)
+        : x(x0), y(y0), vx(vx0), vy(vy0), ax(0.0), ay(-9.8) {}
+
+    void step(double dt)
+    {
+        vx += ax * dt;
+        vy += ay * dt;
+        x += vx * dt;
+        y += vy * dt;
+    }
+
+    bool in_flight() const { return y >= 0.0; }
 };
 
-template <typename Func>
-Result time_it(const std::string &label, Func &&fn)
-{
-    auto start = std::chrono::high_resolution_clock::now();
-    fn();
-    auto stop = std::chrono::high_resolution_clock::now();
-    long long ns = std::chrono::duration_cast<std::chrono::nanoseconds>(stop - start).count();
-    return {label, ns};
-}
+// ─── Noise ──────────────────────────────────────────────────────────────────
 
-void print_result(const Result &r)
+struct NoisySensor
 {
-    double ms = r.ns / 1e6;
-    std::cout << "  [" << r.name << "] " << r.ns << " ns  (" << ms << " ms)\n";
-}
+    std::mt19937 rng{123};
+    std::normal_distribution<double> noise;
 
-void section(const std::string &title)
+    NoisySensor(double stddev) : noise(0.0, stddev) {}
+
+    std::pair<double, double> observe(const Ball &b)
+    {
+        return {b.x + noise(rng), b.y + noise(rng)};
+    }
+};
+
+// ─── Point ──────────────────────────────────────────────────────────────────
+
+struct Point
 {
-    std::cout << "\n══════════════════════════════════════════\n";
-    std::cout << "  " << title << "\n";
-    std::cout << "══════════════════════════════════════════\n";
-}
+    double x, y;
+};
 
-// ─── main ───────────────────────────────────────────────────────────────────
+// ─── Main ───────────────────────────────────────────────────────────────────
 
 int main()
 {
-    constexpr size_t LARGE = 1000;
-    constexpr size_t SMALL = 4;
+    constexpr double dt = 0.1;
+    constexpr double noise = 2.5;
 
-    // ── 1. Constructors ──────────────────────────────────────────────────────
-    section("Constructors");
-
-    matrix<double> empty;
-    std::cout << "  Default ctor: " << empty.get_row_num() << "x" << empty.get_col_num() << "\n";
-
-    matrix<double> A(LARGE, LARGE, true);
-    matrix<double> B(LARGE, LARGE, true);
-
-    auto r_copy = time_it("Copy ctor (1000x1000)", [&]
-                          { matrix<double> tmp(A); (void)tmp; });
-    print_result(r_copy);
-
-    auto r_move = time_it("Move ctor (1000x1000)", [&]
-                          {
-        matrix<double> src(A);
-        matrix<double> dst(std::move(src));
-        (void)dst; });
-    print_result(r_move);
-
-    auto r_copy_assign = time_it("Copy assignment (1000x1000)", [&]
-                                 {
-        matrix<double> tmp;
-        tmp = A;
-        (void)tmp; });
-    print_result(r_copy_assign);
-
-    auto r_move_assign = time_it("Move assignment (1000x1000)", [&]
-                                 {
-        matrix<double> src(A);
-        matrix<double> dst;
-        dst = std::move(src);
-        (void)dst; });
-    print_result(r_move_assign);
-
-    // ── 2. push_row / at ─────────────────────────────────────────────────────
-    section("push_row  &  at");
-
+    auto fmt = [](double a, double b)
     {
-        matrix<double> m;
-        auto r = time_it("push_row x1000 (1000-wide)", [&]
-                         {
-            std::vector<double> row(1000, 1.5);
-            for (int i = 0; i < 1000; ++i)
-                m.push_row(row); });
-        print_result(r);
-        std::cout << "  Final size: " << m.get_row_num() << "x" << m.get_col_num() << "\n";
-        std::cout << "  at(0,0)=" << m.at(0, 0) << "  at(999,999)=" << m.at(999, 999) << "\n";
+        std::ostringstream ss;
+        ss << std::fixed << std::setprecision(2) << "(" << a << ", " << b << ")";
+        return ss.str();
+    };
+
+    // ─── Simulate & store ───────────────────────────────────────────────────
+
+    std::vector<Point> true_pts, noisy_pts, kalman_pts;
+
+    Ball ball(0.0, 0.0, 20.0, 40.0);
+    NoisySensor sensor(noise);
+    Kalman kf(ball.x, ball.y, dt);
+
+    while (ball.in_flight())
+    {
+        kf.predict();
+        auto [mx, my] = sensor.observe(ball);
+        kf.update(mx, my);
+
+        true_pts.push_back({ball.x, ball.y});
+        noisy_pts.push_back({mx, my});
+        kalman_pts.push_back({kf.get_x(), kf.get_y()});
+
+        ball.step(dt);
     }
 
-    // ── 3. Transpose ─────────────────────────────────────────────────────────
-    section("Transpose");
+    // ─── Table ──────────────────────────────────────────────────────────────
 
-    {
-        matrix<double> s(SMALL, SMALL + 2, false);
-        for (size_t r = 0; r < SMALL; ++r)
-            for (size_t c = 0; c < SMALL + 2; ++c)
-                s.at(r, c) = static_cast<double>(r * 10 + c);
-
-        std::cout << "  Original (" << s.get_row_num() << "x" << s.get_col_num() << "):\n";
-        s.print();
-
-        const auto &s_ref = s;
-        matrix<double> st = s_ref.T();
-        std::cout << "  T() copy (" << st.get_row_num() << "x" << st.get_col_num() << "):\n";
-        st.print();
-
-        s.T();
-        std::cout << "  T() in-place (" << s.get_row_num() << "x" << s.get_col_num() << "):\n";
-        s.print();
-    }
-
-    {
-        matrix<double> tmp(A);
-        auto r1 = time_it("T() copy     (1000x1000)", [&]
-                          {const auto& ref = tmp; auto x = ref.T(); (void)x; });
-        auto r2 = time_it("T() in-place (1000x1000)", [&]
-                          { tmp.T(); });
-        print_result(r1);
-        print_result(r2);
-    }
-
-    // ── 4. matmul ────────────────────────────────────────────────────────────
-    section("matmul  (1000x1000 * 1000x1000)");
-
-    matrix<double> C_single, C_multi;
-    auto r_mm = time_it("matmul single-thread", [&]
-                        { C_single = B.matmul(A); });
-    auto r_mmt = time_it("matmul multithreaded", [&]
-                         { C_multi = B.matmul_multithreaded(A); });
-    print_result(r_mm);
-    print_result(r_mmt);
-    std::cout << "  Speedup: " << static_cast<double>(r_mm.ns) / r_mmt.ns << "x\n";
-
-    // ── 5. Element-wise matrix operators ─────────────────────────────────────
-    section("Element-wise matrix operators (1000x1000)");
-
-    {
-        matrix<double> a(A), b(B);
-        auto r1 = time_it("operator+  (copy)", [&]
-                          { auto x = a + b; (void)x; });
-        auto r2 = time_it("operator-  (copy)", [&]
-                          { auto x = a - b; (void)x; });
-        auto r3 = time_it("operator*  (copy)", [&]
-                          { auto x = a * b; (void)x; });
-        auto r4 = time_it("operator+= (in-place)", [&]
-                          { a += b; });
-        auto r5 = time_it("operator-= (in-place)", [&]
-                          { a -= b; });
-        auto r6 = time_it("operator*= (in-place)", [&]
-                          { a *= b; });
-        for (auto &r : {r1, r2, r3, r4, r5, r6})
-            print_result(r);
-    }
-
-    {
-        matrix<double> p(SMALL, SMALL, false), q(SMALL, SMALL, false);
-        for (size_t i = 0; i < SMALL; ++i)
-            for (size_t j = 0; j < SMALL; ++j)
-            {
-                p.at(i, j) = 2.0;
-                q.at(i, j) = 3.0;
-            }
-
-        std::cout << "\n  Spot-check (4x4, all-2 + all-3 = all-5):\n";
-        (p + q).print();
-    }
-
-    // ── 6. Scalar operators ──────────────────────────────────────────────────
-    section("Scalar operators (1000x1000, scalar=2.5)");
-
-    {
-        matrix<double> a(A);
-        const double sc = 2.5;
-        auto r1 = time_it("operator+  scalar (copy)", [&]
-                          { auto x = a + sc; (void)x; });
-        auto r2 = time_it("operator-  scalar (copy)", [&]
-                          { auto x = a - sc; (void)x; });
-        auto r3 = time_it("operator*  scalar (copy)", [&]
-                          { auto x = a * sc; (void)x; });
-        auto r4 = time_it("operator+= scalar (in-place)", [&]
-                          { a += sc; });
-        auto r5 = time_it("operator-= scalar (in-place)", [&]
-                          { a -= sc; });
-        auto r6 = time_it("operator*= scalar (in-place)", [&]
-                          { a *= sc; });
-        for (auto &r : {r1, r2, r3, r4, r5, r6})
-            print_result(r);
-    }
-
-    {
-        matrix<double> p(SMALL, SMALL, false);
-        for (size_t i = 0; i < SMALL; ++i)
-            for (size_t j = 0; j < SMALL; ++j)
-                p.at(i, j) = 4.0;
-        std::cout << "\n  Spot-check (4x4, all-4 * 3.0 = all-12):\n";
-        (p * 3.0).print();
-    }
-
-    // ── 7. Mean ──────────────────────────────────────────────────────────────
-    section("Mean (1000x1000)");
-
-    {
-        size_t axis1 = 1;
-        size_t axis0 = 0;
-
-        matrix<double> row_result, col_result;
-        auto r1 = time_it("mean(axis=1) row-wise  → (1000x1)", [&]
-                          { row_result = A.mean(axis1); });
-        auto r2 = time_it("mean(axis=0) col-wise  → (1x1000)", [&]
-                          { col_result = A.mean(axis0); });
-        print_result(r1);
-        print_result(r2);
-
-        std::cout << "  row_result size: " << row_result.get_row_num() << "x" << row_result.get_col_num() << "\n";
-        std::cout << "  col_result size: " << col_result.get_row_num() << "x" << col_result.get_col_num() << "\n";
-    }
-
-    // correctness spot-check
-    {
-        matrix<double> p(SMALL, SMALL, false);
-        for (size_t i = 0; i < SMALL; ++i)
-            for (size_t j = 0; j < SMALL; ++j)
-                p.at(i, j) = static_cast<double>((i + 1) * 10); // rows: 10, 20, 30, 40
-
-        size_t axis1 = 1;
-        size_t axis0 = 0;
-
-        std::cout << "\n  Spot-check input (rows are 10, 20, 30, 40):\n";
-        p.print();
-
-        std::cout << "  mean(axis=1) — each row mean should be 10, 20, 30, 40:\n";
-        p.mean(axis1).print();
-
-        std::cout << "  mean(axis=0) — each col mean should be 25:\n";
-        p.mean(axis0).print();
-    }
-
-    // ── 8. Done ──────────────────────────────────────────────────────────────
-    section("Done — all tests complete");
     std::cout << "\n";
+    std::cout << "══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════\n";
+    std::cout << "  Kalman Filter -- 2D Projectile Tracking\n";
+    std::cout << "══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════\n";
+    std::cout << "  Launch: vx=20 m/s  vy=40 m/s  gravity=-9.8 m/s²  noise=" << noise << "m\n\n";
+
+    std::cout << std::fixed << std::setprecision(2);
+    std::cout << std::left
+              << std::setw(8) << "  t(s)"
+              << std::setw(26) << "  True (x,y)"
+              << std::setw(26) << "  Noisy (x,y)"
+              << std::setw(26) << "  Kalman (x,y)"
+              << std::setw(26) << "  Noisy Err (x,y)"
+              << std::setw(26) << "  Kalman Err (x,y)"
+              << "\n";
+    std::cout << std::string(138, '-') << "\n";
+
+    for (size_t i = 0; i < true_pts.size(); ++i)
+    {
+        double t = i * dt;
+        auto &tp = true_pts[i];
+        auto &np = noisy_pts[i];
+        auto &kp = kalman_pts[i];
+
+        double noisy_err_x = np.x - tp.x;
+        double noisy_err_y = np.y - tp.y;
+        double kalman_err_x = kp.x - tp.x;
+        double kalman_err_y = kp.y - tp.y;
+
+        std::ostringstream t_ss;
+        t_ss << std::fixed << std::setprecision(2) << t;
+
+        std::cout << std::left
+                  << std::setw(8) << ("  " + t_ss.str())
+                  << std::setw(26) << ("  " + fmt(tp.x, tp.y))
+                  << std::setw(26) << ("  " + fmt(np.x, np.y))
+                  << std::setw(26) << ("  " + fmt(kp.x, kp.y))
+                  << std::setw(26) << ("  " + fmt(noisy_err_x, noisy_err_y))
+                  << std::setw(26) << ("  " + fmt(kalman_err_x, kalman_err_y))
+                  << "\n";
+    }
+
+    // ─── Landing prediction ─────────────────────────────────────────────────
+
+    double kf_vx = kf.get_vx();
+    double kf_vy = kf.get_vy();
+    double kf_x = kf.get_x();
+    double kf_y = kf.get_y();
+
+    double disc = kf_vy * kf_vy + 2 * 9.8 * kf_y;
+    double t_land = (kf_vy + std::sqrt(disc)) / 9.8;
+    double predicted_landing = kf_x + kf_vx * t_land;
+    double true_landing = ball.x - ball.vx * dt;
+
+    std::cout << "\n══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════\n";
+    std::cout << "  Predicted landing x : " << predicted_landing << " m\n";
+    std::cout << "  Approx true landing : " << true_landing << " m\n";
+    std::cout << "══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════\n\n";
+
+    // ─── ASCII Plot ─────────────────────────────────────────────────────────
+
+    constexpr int W = 160;
+    constexpr int H = 50;
+
+    double x_min = 0, x_max = true_pts.back().x;
+    double y_min = 0, y_max = 0;
+    for (auto &p : true_pts)
+        y_max = std::max(y_max, p.y);
+
+    auto to_col = [&](double x)
+    { return (int)((x - x_min) / (x_max - x_min) * (W - 1)); };
+    auto to_row = [&](double y)
+    { return (int)((1.0 - (y - y_min) / (y_max - y_min)) * (H - 1)); };
+
+    std::vector<std::string> grid(H, std::string(W, ' '));
+
+    // true lowest priority
+    for (auto &p : true_pts)
+    {
+        int c = to_col(p.x), r = to_row(p.y);
+        if (r >= 0 && r < H && c >= 0 && c < W)
+            grid[r][c] = '*';
+    }
+    // noisy medium priority
+    for (auto &p : noisy_pts)
+    {
+        int c = to_col(p.x), r = to_row(p.y);
+        if (r >= 0 && r < H && c >= 0 && c < W)
+            grid[r][c] = '.';
+    }
+    // kalman highest priority
+    for (auto &p : kalman_pts)
+    {
+        int c = to_col(p.x), r = to_row(p.y);
+        if (r >= 0 && r < H && c >= 0 && c < W)
+            grid[r][c] = '#';
+    }
+
+    std::cout << "  ASCII Trajectory Plot\n";
+    std::cout << "  * = True   . = Noisy   # = Kalman\n\n";
+    for (auto &row : grid)
+        std::cout << "  |" << row << "|\n";
+    std::cout << "  +" << std::string(W, '-') << "+\n\n";
+
     return 0;
 }

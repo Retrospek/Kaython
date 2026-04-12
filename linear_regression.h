@@ -76,10 +76,9 @@ public:
 
         // dL/dw = (2/N) * X.T @ residual → (F,N) @ (N,1) = (F,1) ... then T to get (1,F)
         matrix<TX> XT = X;
-        XT.T();                                                     // (F, N)
-        matrix<TW> weight_grad = residual.matmul_multithreaded(XT); // XT @ residual = (F,N)@...
-        // matmul(other) = other @ this, so residual.matmul(XT) = XT @ residual = (F,N)@(N,1) = (F,1)
-        weight_grad.T(); // (1, F) to match weights shape
+        XT.T();
+        matrix<TW> weight_grad = residual.matmul_multithreaded(XT);
+        weight_grad.T();
         weight_grad *= TW(2) / static_cast<TW>(N);
 
         TW bias_grad = TW(0);

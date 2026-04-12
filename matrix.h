@@ -180,18 +180,6 @@ public:
         return new_mat;
     }
 
-    void T()
-    {
-        matrix<DT> new_mat(this->_col_num, this->_row_num, false);
-        _parallel_operator_overload([&](size_t r_start, size_t r_end)
-                                    {
-        for (size_t r = r_start; r < r_end; ++r)
-            for (size_t c = 0; c < this->_col_num; ++c)
-                new_mat.at(c, r) = this->at(r, c); }, this->_row_num);
-
-        *this = std::move(new_mat);
-    }
-
     matrix inverse() const
     {
         if (_row_num != _col_num)
@@ -250,55 +238,49 @@ public:
         return result;
     }
 
-    void inverse()
+    matrix matmul(const matrix &other) // A.matmul(B) = A * B
     {
-        *this = std::move(static_cast<const matrix *>(this)->inverse());
-    }
-
-    matrix matmul(const matrix &other) // left is = OTHER -> l_c = r_r
-    {
-        if (other._col_num != this->_row_num)
+        if (this->_col_num != other._row_num)
         {
-            throw std::invalid_argument("Calling Other x Curr => Other Column Num != This Row Num");
+            throw std::invalid_argument("A.matmul(B) requires A.cols == B.rows");
         }
 
-        matrix<DT> new_mat(other._row_num, _col_num, false);
-        new_mat.clear_data();
+        matrix<DT> new_mat(this->_row_num, other._col_num, false);
 
-        for (size_t r = 0; r < other._row_num; ++r) // LEFT MATRIX IS = OTHER
+        for (size_t r = 0; r < this->_row_num; ++r)
         {
-            for (size_t c = 0; c < _col_num; ++c) // RIGHT MATRIX IS = THIS
+            for (size_t c = 0; c < other._col_num; ++c)
             {
                 DT cell_dot = 0;
-                for (size_t k = 0; k < other._col_num; ++k)
-                { // sum over shared dimension
-                    cell_dot += other.at(r, k) * this->at(k, c);
+                for (size_t k = 0; k < this->_col_num; ++k)
+                {
+                    cell_dot += this->at(r, k) * other.at(k, c);
                 }
-                new_mat._data.push_back(cell_dot);
+                new_mat.at(r, c) = cell_dot;
             }
         }
 
         return new_mat;
     }
-    matrix matmul_multithreaded(const matrix &other) const // left is = OTHER -> l_c = r_r
+    matrix matmul_multithreaded(const matrix &other) const // A.matmul_multithreaded(B) = A * B
     {
-        if (other._col_num != this->_row_num)
+        if (this->_col_num != other._row_num)
         {
-            throw std::invalid_argument("Calling Other x Curr => Other Column Num != This Row Num");
+            throw std::invalid_argument("A.matmul_multithreaded(B) requires A.cols == B.rows");
         }
 
-        matrix<DT> new_mat(other._row_num, _col_num, false);
+        matrix<DT> new_mat(this->_row_num, other._col_num, false);
 
         auto tile = [&](size_t r_t, size_t r_b)
         {
-            for (size_t r = r_t; r < r_b; ++r) // LEFT MATRIX IS = OTHER
+            for (size_t r = r_t; r < r_b; ++r)
             {
-                for (size_t c = 0; c < new_mat._col_num; ++c) // RIGHT MATRIX IS = THIS
+                for (size_t c = 0; c < other._col_num; ++c)
                 {
                     DT cell_dot = 0;
-                    for (size_t k = 0; k < other._col_num; ++k)
-                    { // sum over shared dimension
-                        cell_dot += other.at(r, k) * this->at(k, c);
+                    for (size_t k = 0; k < this->_col_num; ++k)
+                    {
+                        cell_dot += this->at(r, k) * other.at(k, c);
                     }
                     new_mat._data[r * new_mat._col_num + c] = cell_dot;
                 }
@@ -309,14 +291,15 @@ public:
         if (num_threads == 0)
             num_threads = 4;
 
-        size_t rows_per_thread = other._row_num / num_threads;
+        num_threads = std::min(num_threads, this->_row_num);
+        size_t rows_per_thread = this->_row_num / num_threads;
         size_t r_start = 0;
         std::vector<std::jthread> threads;
         threads.reserve(num_threads);
 
         for (size_t i = 0; i < num_threads; ++i)
         {
-            size_t r_end = (i == num_threads - 1) ? other._row_num : r_start + rows_per_thread;
+            size_t r_end = (i == num_threads - 1) ? this->_row_num : r_start + rows_per_thread;
             threads.emplace_back(tile, r_start, r_end);
             r_start = r_end;
         }
