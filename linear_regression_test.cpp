@@ -4,131 +4,118 @@
 #include <string>
 #include "linear_regression.h"
 
-// ─── pretty print ─────────────────────────────────────────────
-
-void header(const std::string &title)
+void print_section_header(const std::string &title)
 {
     std::cout << "\n\033[1;36m━━━ " << title << " ━━━\033[0m\n";
 }
 
-void kv(const std::string &k, float v)
+void print_key_value(const std::string &key, float value)
 {
-    std::cout << "  \033[90m" << std::setw(18) << std::left << k
-              << "\033[1;97m" << std::fixed << std::setprecision(6) << v << "\033[0m\n";
+    std::cout << "  \033[90m" << std::setw(18) << std::left << key
+              << "\033[1;97m" << std::fixed << std::setprecision(6) << value << "\033[0m\n";
 }
 
-void loss_curve(const std::vector<float> &losses, int samples = 8)
+void visualize_loss_progression(const std::vector<float> &losses, int samples = 8)
 {
-    float lo = losses.back(), hi = losses.front();
-    size_t stride = losses.size() / samples;
-
+    float minimum_loss = losses.back();
+    float maximum_loss = losses.front();
+    size_t step_size = losses.size() / samples;
+    
     std::cout << "\n  Loss trend:\n";
     for (int i = 0; i < samples; ++i)
     {
-        size_t idx = i * stride;
-        float l = losses[idx];
-        int bar = (int)(20.0f * (l - lo) / (hi - lo + 1e-9f));
-
-        std::cout << "  [" << std::setw(4) << idx << "] ";
-        std::cout << std::string(bar, '|') << "\n";
+        size_t index = i * step_size;
+        float current_loss = losses[index];
+        int bar_length = (int)(20.0f * (current_loss - minimum_loss) / (maximum_loss - minimum_loss + 1e-9f));
+        
+        std::cout << "  [" << std::setw(4) << index << "] ";
+        std::cout << std::string(bar_length, '|') << "\n";
     }
     std::cout << "  [" << losses.size() - 1 << "] final\n";
 }
 
-// ─── data ───────────────────────────────────────────────────
-
-void make_data(matrix<float> &X, matrix<float> &y,
-               size_t N,
-               const std::vector<float> &w,
-               float b)
+void generate_synthetic_data(matrix<float> &features, matrix<float> &targets,
+                             size_t num_samples,
+                             const std::vector<float> &true_weights,
+                             float true_bias)
 {
-    size_t F = w.size();
-
-    for (size_t i = 0; i < N; ++i)
+    size_t num_features = true_weights.size();
+    
+    for (size_t sample = 0; sample < num_samples; ++sample)
     {
-        float yi = b;
-
-        for (size_t f = 0; f < F; ++f)
+        float target_value = true_bias;
+        
+        for (size_t feature = 0; feature < num_features; ++feature)
         {
-            float x = (i + f + 1) * 0.1f;
-            X.at(i, f) = x;
-            yi += w[f] * x;
+            float feature_value = (sample + feature + 1) * 0.1f;
+            features.at(sample, feature) = feature_value;
+            target_value += true_weights[feature] * feature_value;
         }
-
-        y.at(i, 0) = yi;
+        
+        targets.at(sample, 0) = target_value;
     }
 }
 
-// ─── experiment runner ───────────────────────────────────────
-
-void run_experiment(
-    size_t N,
-    std::vector<float> true_w,
-    float true_b,
-    float LR,
-    size_t iters,
-    float l2 = 0.0f,
-    float l1 = 0.0f)
+void run_linear_regression_experiment(
+    size_t num_samples,
+    std::vector<float> true_weights,
+    float true_bias,
+    float learning_rate,
+    size_t iterations,
+    float l2_regularization = 0.0f,
+    float l1_regularization = 0.0f)
 {
-    size_t F = true_w.size();
-
-    header("Linear Regression Experiment");
-
-    // build dataset
-    matrix<float> X(N, F, false), y(N, 1, false);
-    make_data(X, y, N, true_w, true_b);
-
-    // model
-    LinearRegression<float, float, float, float> model(F, LR, "mse", l2, l1);
-
-    // train
-    auto losses = model.fit(X, y, iters);
-
-    // summary
-    kv("N", (float)N);
-    kv("F", (float)F);
-    kv("LR", LR);
-    kv("first loss", losses.front());
-    kv("final loss", losses.back());
-
-    loss_curve(losses);
-
-    // quick sanity prediction
-    matrix<float> x_test(1, F, false);
-    for (size_t f = 0; f < F; ++f)
-        x_test.at(0, f) = 5.0f;
-
-    auto pred = model.predict(x_test);
-
-    float expected = true_b;
-    for (size_t f = 0; f < F; ++f)
-        expected += true_w[f] * 5.0f;
-
+    size_t num_features = true_weights.size();
+    
+    print_section_header("Linear Regression Experiment");
+    
+    matrix<float> features(num_samples, num_features, false);
+    matrix<float> targets(num_samples, 1, false);
+    generate_synthetic_data(features, targets, num_samples, true_weights, true_bias);
+    
+    LinearRegression<float, float, float, float> model(
+        num_features, learning_rate, "mse", l2_regularization, l1_regularization);
+    
+    auto training_losses = model.fit(features, targets, iterations);
+    
+    print_key_value("N", (float)num_samples);
+    print_key_value("F", (float)num_features);
+    print_key_value("LR", learning_rate);
+    print_key_value("first loss", training_losses.front());
+    print_key_value("final loss", training_losses.back());
+    
+    visualize_loss_progression(training_losses);
+    
+    matrix<float> test_input(1, num_features, false);
+    for (size_t feature = 0; feature < num_features; ++feature)
+        test_input.at(0, feature) = 5.0f;
+    
+    auto prediction = model.predict(test_input);
+    
+    float expected_output = true_bias;
+    for (size_t feature = 0; feature < num_features; ++feature)
+        expected_output += true_weights[feature] * 5.0f;
+    
     std::cout << "\n  Prediction check:\n";
-    kv("pred(x=5,...)", pred.at(0, 0));
-    kv("truth", expected);
+    print_key_value("pred(x=5,...)", prediction.at(0, 0));
+    print_key_value("truth", expected_output);
 }
-
-// ─── main ───────────────────────────────────────────────────
 
 int main()
 {
     std::cout << "\n\033[1;97mLinear Regression Sandbox\033[0m\n";
-
-    // 🔧 JUST CHANGE THESE ↓↓↓
-
-    size_t N = 100;
-    std::vector<float> weights = {4.0f}; // change feature count here
+    
+    size_t num_samples = 100;
+    std::vector<float> weights = {4.0f};
     float bias = 7.0f;
-
-    float LR = 0.0025f;
-    size_t iters = 5000;
-
-    float l2 = 0.0f;
-    float l1 = 0.0f;
-
-    // 🔧 run
-    run_experiment(N, weights, bias, LR, iters, l2, l1);
-
+    float learning_rate = 0.0025f;
+    size_t iterations = 5000;
+    float l2_regularization = 0.0f;
+    float l1_regularization = 0.0f;
+    
+    run_linear_regression_experiment(
+        num_samples, weights, bias, learning_rate, iterations, 
+        l2_regularization, l1_regularization);
+    
     return 0;
 }
